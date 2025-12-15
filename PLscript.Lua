@@ -1,13 +1,4 @@
---[[ 
-    PRISON LIFE EXPLOIT SCRIPT
-    Built with Pseudosynonym UI Library & Severe's API
-]]
 
--- ═══════════════════════════════════════════════════════════════
--- SECTION 1: LIBRARY INITIALIZATION
--- ═══════════════════════════════════════════════════════════════
-
--- Load the UI Library
 local Bytecode, Load, Library
 
 pcall(function()
@@ -721,3 +712,4 @@ end
 
 print("Prison Life Script loaded successfully!")
 print("Press RightShift to toggle the menu")
+
