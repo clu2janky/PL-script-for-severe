@@ -1,0 +1,945 @@
+--[[ 
+    PRISON LIFE EXPLOIT SCRIPT
+    Built with Pseudosynonym UI Library & Severe's API
+]]
+
+-- Load the UI Library
+local Bytecode, Load, Library
+
+pcall(function()
+    print("📡 Fetching Pseudosynonym library...")
+    Bytecode = game:HttpGet("https://raw.githubusercontent.com/DCHARLESAKAMRGREEN/Severe-Luas/main/Libraries/Pseudosynonym.lua")
+    local byteLen = string.len(Bytecode)
+    print("✓ Library bytecode fetched (" .. tostring(byteLen) .. " bytes)")
+end)
+
+if not Bytecode then
+    print("✗ Failed to fetch library bytecode!")
+    return
+end
+
+local success, err = pcall(function()
+    print("🔧 Loading bytecode with luau.load...")
+    Load = luau.load(Bytecode)
+    print("✓ Bytecode loaded, load function type: " .. type(Load))
+    
+    print("📦 Executing library initialization...")
+    Library = Load()
+    print("✓ Library initialized, type: " .. type(Library))
+end)
+
+if not success then
+    print("✗ Error loading library:")
+    print("  " .. tostring(err))
+    return
+end
+
+if not Library then
+    print("✗ Library is nil after initialization!")
+    return
+end
+
+print("✓ Library loaded successfully:", type(Library))
+
+-- Create Main Window
+local Window
+
+local success, err = pcall(function()
+    if not Library or not Library.CreateWindow then
+        print("✗ Library.CreateWindow not found!")
+        print("  Library type: " .. type(Library))
+        if type(Library) == "table" then
+            print("  Library contents: " .. table.concat(getkeystable and getkeystable(Library) or {"<unable to list>"}, ", "))
+        end
+        return
+    end
+    
+    print("🪟 Creating main window...")
+    Window = Library:CreateWindow({
+        Title = "Prison Life @jankyclu ",
+        Tag = "v1.0.0",
+        Keybind = "RightShift"
+    })
+    print("✓ Window created!")
+end)
+
+if not success then
+    print("✗ Error creating window:")
+    print("  " .. tostring(err))
+    return
+end
+
+if not Window then
+    print("✗ Window creation failed! (returned nil)")
+    return
+end
+
+print("✓ Window initialized successfully")
+
+-- Services
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UserInputService = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Camera = workspace.CurrentCamera
+
+-- Weapon Configuration Table - DEFINED EARLY FOR USE IN CALLBACKS
+local OriginalWeaponStats = {}
+local WeaponModSettings = {}
+local AvailableWeapons = {}
+
+-- Settings variables (defined early so callbacks can use them)
+local VerboseLogging = true
+local AutoApplyMods = false
+local NotificationsEnabled = true
+local NotificationDuration = 3
+local GunModsLoopEnabled = true
+
+-- Notification function
+local function SendNotification(title, message)
+    if not NotificationsEnabled then return end
+    
+    pcall(function()
+        -- Try to use the library's notification system if available
+        if Library and Library.Notify then
+            Library:Notify({
+                Title = title,
+                Description = message,
+                Duration = NotificationDuration
+            })
+        else
+            -- Fallback to console
+            print("📢 [" .. title .. "] " .. message)
+        end
+    end)
+end
+
+-- UI Element references (defined early)
+local NoRecoilToggle, NoSpreadToggle, RapidFireToggle, RapidFireSpeed, DamageMultiplier, SpreadReduction, InfiniteAmmoToggle
+
+-- Aggressive Gun Mods Logic - MUST be defined before buttons that use it
+local function ApplyGunModsNow(tool)
+    if not tool then return end
+    
+    local toolName = tool.Name
+    
+    -- Initialize mod settings for this weapon if not exists
+    if not WeaponModSettings[toolName] then
+        WeaponModSettings[toolName] = {
+            NoRecoil = NoRecoilToggle.Value,
+            NoSpread = NoSpreadToggle.Value,
+            RapidFire = RapidFireToggle.Value,
+            DamageMultiplier = DamageMultiplier.Value,
+            SpreadReduction = SpreadReduction.Value
+        }
+    end
+    
+    -- Store original stats on first modification
+    if not OriginalWeaponStats[toolName] then
+        OriginalWeaponStats[toolName] = {}
+        
+        -- Search for weapon properties - they might be in Config, inside Handle, or elsewhere
+        local function findProperty(name, searchStart)
+            searchStart = searchStart or tool
+            
+            -- Direct child
+            local found = searchStart:FindFirstChild(name)
+            if found and (found.ClassName == "NumberValue" or found.ClassName == "IntValue" or found.ClassName == "DoubleValue") then 
+                return found 
+            end
+            
+            -- Search all descendants
+            for _, descendant in ipairs(searchStart:GetDescendants()) do
+                if descendant.Name == name and (descendant.ClassName == "NumberValue" or descendant.ClassName == "IntValue" or descendant.ClassName == "DoubleValue") then
+                    return descendant
+                end
+            end
+            
+            return nil
+        end
+        
+        local fireRate = findProperty("FireRate")
+        local damage = findProperty("Damage")
+        local spreadRadius = findProperty("SpreadRadius")
+        local ammo = findProperty("Ammo")
+        local currentAmmo = findProperty("CurrentAmmo")
+        local maxAmmo = findProperty("MaxAmmo")
+        
+        -- Also find AutoFire for rapid fire
+        local autoFire = tool:FindFirstChild("AutoFire")
+        if not autoFire then
+            for _, descendant in ipairs(tool:GetDescendants()) do
+                if descendant.Name == "AutoFire" then
+                    autoFire = descendant
+                    break
+                end
+            end
+        end
+        
+        -- Also check for attributes on the tool
+        local toolAttrs = tool:GetAttributes()
+        if toolAttrs then
+            if not fireRate and toolAttrs.FireRate then
+                OriginalWeaponStats[toolName].FireRate = toolAttrs.FireRate
+            end
+            if not damage and toolAttrs.Damage then
+                OriginalWeaponStats[toolName].Damage = toolAttrs.Damage
+            end
+            if not spreadRadius and toolAttrs.SpreadRadius then
+                OriginalWeaponStats[toolName].SpreadRadius = toolAttrs.SpreadRadius
+            end
+        end
+        
+        if fireRate then OriginalWeaponStats[toolName].FireRate = fireRate.Value end
+        if damage then OriginalWeaponStats[toolName].Damage = damage.Value end
+        if spreadRadius then OriginalWeaponStats[toolName].SpreadRadius = spreadRadius.Value end
+        if ammo then OriginalWeaponStats[toolName].Ammo = ammo.Value end
+        if currentAmmo then OriginalWeaponStats[toolName].CurrentAmmo = currentAmmo.Value end
+        if maxAmmo then OriginalWeaponStats[toolName].MaxAmmo = maxAmmo.Value end
+        if autoFire and (autoFire.ClassName == "BoolValue") then OriginalWeaponStats[toolName].AutoFire = autoFire.Value end
+        
+        print("✓ Weapon stats stored: " .. toolName)
+        print("  - FireRate: " .. tostring(OriginalWeaponStats[toolName].FireRate))
+        print("  - Damage: " .. tostring(OriginalWeaponStats[toolName].Damage))
+        print("  - SpreadRadius: " .. tostring(OriginalWeaponStats[toolName].SpreadRadius))
+    end
+    
+    -- APPLY MODS USING SEVERE'S MEMORY API
+    pcall(function()
+        local function findAndModifyProperty(name, newValue)
+            -- Direct child
+            local prop = tool:FindFirstChild(name)
+            if prop then
+                pcall(function()
+                    -- Only try to set Value if this is a value object
+                    if prop.ClassName == "NumberValue" or prop.ClassName == "IntValue" or prop.ClassName == "DoubleValue" then
+                        prop.Value = newValue
+                    end
+                end)
+            end
+            
+            -- Search descendants
+            for _, descendant in ipairs(tool:GetDescendants()) do
+                if descendant.Name == name then
+                    pcall(function()
+                        -- Only try to set Value if this is a value object
+                        if descendant.ClassName == "NumberValue" or descendant.ClassName == "IntValue" or descendant.ClassName == "DoubleValue" then
+                            descendant.Value = newValue
+                        end
+                    end)
+                    break
+                end
+            end
+        end
+        
+        -- NO SPREAD - Set to nearly zero
+        if NoSpreadToggle.Value then
+            local spreadReductionAmount = SpreadReduction.Value
+            local newSpread = (OriginalWeaponStats[toolName].SpreadRadius or 1) * (1 - spreadReductionAmount)
+            findAndModifyProperty("SpreadRadius", math.max(newSpread, 0.0001))
+            print("📊 NO SPREAD applied (Spread Reduction: " .. tostring(spreadReductionAmount) .. ")")
+        end
+        
+        -- RAPID FIRE - Decrease fire rate AND enable AutoFire
+        if RapidFireToggle.Value then
+            local fireRateMultiplier = RapidFireSpeed.Value
+            local newFireRate = (OriginalWeaponStats[toolName].FireRate or 1) / fireRateMultiplier
+            findAndModifyProperty("FireRate", newFireRate)
+            
+            -- Also set AutoFire to true for rapid fire
+            pcall(function()
+                local af = tool:FindFirstChild("AutoFire")
+                if not af then
+                    for _, descendant in ipairs(tool:GetDescendants()) do
+                        if descendant.Name == "AutoFire" then
+                            af = descendant
+                            break
+                        end
+                    end
+                end
+                
+                if af and af.ClassName == "BoolValue" then
+                    af.Value = true
+                end
+            end)
+            
+            print("⚡ RAPID FIRE applied (Fire Rate Multiplier: " .. tostring(fireRateMultiplier) .. ", AutoFire: true)")
+        end
+        
+        -- DAMAGE MULTIPLIER - Increase damage
+        if DamageMultiplier.Value > 1 then
+            local damageMultiplierAmount = DamageMultiplier.Value
+            local newDamage = (OriginalWeaponStats[toolName].Damage or 1) * damageMultiplierAmount
+            findAndModifyProperty("Damage", newDamage)
+            print("💥 DAMAGE MULTIPLIER applied (Damage Multiplier: " .. tostring(damageMultiplierAmount) .. ")")
+        end
+        
+        -- INFINITE AMMO - Keep ammo high
+        if InfiniteAmmoToggle.Value then
+            findAndModifyProperty("CurrentAmmo", 9999)
+            findAndModifyProperty("Ammo", 9999)
+            findAndModifyProperty("MaxAmmo", 9999)
+            print("♾️  INFINITE AMMO applied (9999)")
+        end
+        
+        -- Print summary of all active mods
+        print("\n📋 ACTIVE MODS SUMMARY:")
+        print("  No Recoil: " .. (NoRecoilToggle.Value and "✓ ON" or "✗ OFF"))
+        print("  No Spread: " .. (NoSpreadToggle.Value and "✓ ON (Reduction: " .. tostring(SpreadReduction.Value) .. ")" or "✗ OFF"))
+        print("  Rapid Fire: " .. (RapidFireToggle.Value and "✓ ON (Multiplier: " .. tostring(RapidFireSpeed.Value) .. ")" or "✗ OFF"))
+        print("  Infinite Ammo: " .. (InfiniteAmmoToggle.Value and "✓ ON (9999)" or "✗ OFF"))
+        print("  Damage Multiplier: " .. tostring(DamageMultiplier.Value))
+        print("")
+    end)
+end
+
+-- Store Prison Life relevant data
+local TeleportLocations = {
+    ["Cafeteria"] = Vector3.new(921, 99, 2283),
+    ["Yard"] = Vector3.new(716, 97, 2469),
+    ["Cells"] = Vector3.new(900, 114, 2497),
+    ["Guard Tower"] = Vector3.new( 828, 125, 2600),
+    ["Armory"] = Vector3.new(819, 99, 2232),
+    ["Roof"] = Vector3.new(957, 131, 2231),
+    ["Police Station"] = Vector3.new(692, 99, 2244),
+    ["City"] = Vector3.new(-331, 54, 1777),
+    ["Crim Base"] = Vector3.new(-975, 108, 2044),
+}
+
+---------------------------------------------------------------------
+-- TELEPORT TAB
+---------------------------------------------------------------------
+local TeleportTab = Window:AddTab({ Name = "Teleport" })
+
+local TeleportContainer = TeleportTab:AddContainer({ Name = "Locations", Side = "Left", AutoSize = true })
+
+TeleportContainer:AddLabel({ Name = "Quick Teleport" })
+TeleportContainer:AddSeparator()
+
+for locationName, locationPos in pairs(TeleportLocations) do
+    TeleportContainer:AddButton({
+        Name = "TP to " .. locationName,
+        Callback = function()
+            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(locationPos)
+                print("✓ Teleported to " .. locationName)
+            end
+        end
+    })
+end
+
+-- Custom Teleport
+local CustomTPContainer = TeleportTab:AddContainer({ Name = "Custom TP", Side = "Right", AutoSize = true })
+
+local XInput = CustomTPContainer:AddInput({ Name = "X", Text = "0" })
+local YInput = CustomTPContainer:AddInput({ Name = "Y", Text = "0" })
+local ZInput = CustomTPContainer:AddInput({ Name = "Z", Text = "0" })
+
+CustomTPContainer:AddButton({
+    Name = "Teleport to Custom Position",
+    Callback = function()
+        local x = tonumber(XInput.Text or "0") or 0
+        local y = tonumber(YInput.Text or "0") or 0
+        local z = tonumber(ZInput.Text or "0") or 0
+        
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(x, y, z)
+            print("✓ Teleported to " .. tostring(Vector3.new(x, y, z)))
+        end
+    end
+})
+
+CustomTPContainer:AddButton({
+    Name = "Copy Current Position",
+    Callback = function()
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            local pos = LocalPlayer.Character.HumanoidRootPart.Position
+            local posStr = tostring(Vector3.new(math.floor(pos.X), math.floor(pos.Y), math.floor(pos.Z)))
+            print("Position: " .. posStr)
+        end
+    end
+})
+
+CustomTPContainer:AddLabel({ Name = "Look in console for copied pos" })
+
+-- Gun Mods TAB
+---------------------------------------------------------------------
+local GunModsTab = Window:AddTab({ Name = "Gun Mods" })
+
+-- Per-weapon mod settings
+local WeaponModToggles = {}  -- WeaponModToggles[weaponName] = {NoRecoil, NoSpread, RapidFire, InfiniteAmmo}
+local WeaponModSliders = {}  -- WeaponModSliders[weaponName] = {RapidFireSpeed, DamageMultiplier, SpreadReduction}
+local WeaponContainersCreated = {}  -- Track which weapon containers have been created to avoid duplicates
+
+-- Keep global references for compatibility
+NoRecoilToggle = { Value = false }
+NoSpreadToggle = { Value = false }
+RapidFireToggle = { Value = false }
+RapidFireSpeed = { Value = 2 }
+DamageMultiplier = { Value = 1 }
+SpreadReduction = { Value = 1 }
+InfiniteAmmoToggle = { Value = false }
+
+-- Updated ApplyGunModsNow to use per-weapon settings
+local function ApplyGunModsNowPerWeapon(tool, weaponName)
+    if not tool or not weaponName then return end
+    
+    local toolName = tool.Name
+    
+    -- Get weapon-specific settings
+    if not WeaponModToggles[weaponName] then
+        WeaponModToggles[weaponName] = {
+            NoRecoil = { Value = false },
+            NoSpread = { Value = false },
+            RapidFire = { Value = false },
+            InfiniteAmmo = { Value = false }
+        }
+    end
+    if not WeaponModSliders[weaponName] then
+        WeaponModSliders[weaponName] = {
+            RapidFireSpeed = { Value = 2 },
+            DamageMultiplier = { Value = 1 },
+            SpreadReduction = { Value = 1 }
+        }
+    end
+    
+    local noRecoil = WeaponModToggles[weaponName].NoRecoil
+    local noSpread = WeaponModToggles[weaponName].NoSpread
+    local rapidFire = WeaponModToggles[weaponName].RapidFire
+    local infiniteAmmo = WeaponModToggles[weaponName].InfiniteAmmo
+    local rapidFireSpeed = WeaponModSliders[weaponName].RapidFireSpeed
+    local damageMultiplier = WeaponModSliders[weaponName].DamageMultiplier
+    local spreadReduction = WeaponModSliders[weaponName].SpreadReduction
+    
+    -- Store original stats on first modification
+    if not OriginalWeaponStats[toolName] then
+        OriginalWeaponStats[toolName] = {}
+        
+        -- Get attributes (Prison Life stores weapon properties as attributes!)
+        local attrs = tool:GetAttributes()
+        if attrs then
+            for key, val in pairs(attrs) do
+                if type(val) == "string" then
+                    OriginalWeaponStats[toolName][key] = tonumber(val) or val
+                else
+                    OriginalWeaponStats[toolName][key] = val
+                end
+            end
+        end
+        
+        print("✓ Weapon stats stored: " .. toolName)
+        print("  - AccurateRange: " .. tostring(OriginalWeaponStats[toolName].AccurateRange))
+        print("  - FireRate: " .. tostring(OriginalWeaponStats[toolName].FireRate))
+        print("  - CurrentAmmo: " .. tostring(OriginalWeaponStats[toolName].CurrentAmmo))
+    end
+    
+    -- APPLY MODS - SetAttribute persistence
+    pcall(function()
+        -- NO SPREAD
+        if noSpread.Value then
+            local spreadReductionAmount = spreadReduction.Value
+            local originalSpreadRadius = OriginalWeaponStats[toolName].SpreadRadius or 0.022
+            local newSpreadRadius = originalSpreadRadius * (1 - spreadReductionAmount)
+            tool:SetAttribute("SpreadRadius", math.max(newSpreadRadius, 0.001))
+            print("📊 NO SPREAD applied")
+        end
+        
+        -- RAPID FIRE
+        if rapidFire.Value then
+            local fireRateMultiplier = rapidFireSpeed.Value
+            local originalFireRate = OriginalWeaponStats[toolName].FireRate or 0.1
+            local newFireRate = originalFireRate / fireRateMultiplier
+            tool:SetAttribute("FireRate", newFireRate)
+            tool:SetAttribute("AutoFire", true)
+            print("⚡ RAPID FIRE applied")
+        end
+        
+        -- NO RECOIL
+        if noRecoil.Value then
+            local originalRange = OriginalWeaponStats[toolName].AccurateRange or 90
+            local newAccurateRange = originalRange * 0.5
+            tool:SetAttribute("AccurateRange", math.max(newAccurateRange, 0.1))
+            print("🎯 NO RECOIL applied")
+        end
+        
+        -- INFINITE AMMO
+        if infiniteAmmo.Value then
+            tool:SetAttribute("CurrentAmmo", 999999)
+            print("♾️  INFINITE AMMO applied")
+        end
+    end)
+end
+
+-- Function to refresh the Gun Mods tab with all available weapons
+local function RefreshGunModsTab()
+    print("\n🔄 Refreshing Gun Mods Tab...\n")
+    
+    pcall(function()
+        -- Get all weapons
+        local weapons = {}
+        if LocalPlayer.Character then
+            for _, item in ipairs(LocalPlayer.Character:GetChildren()) do
+                local className = pcall(function() return item.ClassName end) and item.ClassName or "Unknown"
+                if className == "Tool" then
+                    table.insert(weapons, item.Name)
+                end
+            end
+        end
+        
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        if backpack then
+            for _, item in ipairs(backpack:GetChildren()) do
+                local className = pcall(function() return item.ClassName end) and item.ClassName or "Unknown"
+                if className == "Tool" and not table.find(weapons, item.Name) then
+                    table.insert(weapons, item.Name)
+                end
+            end
+        end
+        
+        if #weapons == 0 then
+            print("✗ No weapons found!")
+            return
+        end
+        
+        print("✓ Found " .. #weapons .. " weapon(s): " .. table.concat(weapons, ", "))
+        
+        -- For each weapon, create containers alternating left/right for balance
+        for index, weaponName in ipairs(weapons) do
+            pcall(function()
+                -- Skip non-gun tools (Handcuffs, Taser, etc.)
+                if weaponName == "Handcuffs" or weaponName == "Taser" then
+                    print("  ⊘ " .. weaponName .. " skipped (not a gun)")
+                    return
+                end
+                
+                -- Skip if this weapon container already exists
+                if WeaponContainersCreated[weaponName] then
+                    print("  ⚠️  " .. weaponName .. " already has UI (skipping duplicate)")
+                    return
+                end
+                
+                -- Initialize storage for this weapon
+                if not WeaponModToggles[weaponName] then
+                    WeaponModToggles[weaponName] = {
+                        NoRecoil = { Value = false },
+                        NoSpread = { Value = false },
+                        RapidFire = { Value = false },
+                        InfiniteAmmo = { Value = false }
+                    }
+                end
+                if not WeaponModSliders[weaponName] then
+                    WeaponModSliders[weaponName] = {
+                        RapidFireSpeed = { Value = 2 },
+                        DamageMultiplier = { Value = 1 },
+                        SpreadReduction = { Value = 1 }
+                    }
+                end
+                
+                -- Alternate sides for better balance
+                local side = (index % 2 == 1) and "Left" or "Right"
+                
+                -- Create container for this weapon
+                local weaponContainer = GunModsTab:AddContainer({ Name = "🔫 " .. weaponName, Side = side, AutoSize = true })
+                
+                -- Mark this weapon as having a container created
+                WeaponContainersCreated[weaponName] = true
+                
+                -- Toggles
+                weaponContainer:AddLabel({ Name = "Mods" })
+                WeaponModToggles[weaponName].NoRecoil = weaponContainer:AddToggle({ Name = "No Recoil", Value = false })
+                WeaponModToggles[weaponName].NoSpread = weaponContainer:AddToggle({ Name = "No Spread", Value = false })
+                WeaponModToggles[weaponName].RapidFire = weaponContainer:AddToggle({ Name = "Rapid Fire", Value = false })
+                WeaponModToggles[weaponName].InfiniteAmmo = weaponContainer:AddToggle({ Name = "Infinite Ammo", Value = false })
+                
+                weaponContainer:AddSeparator()
+                
+                -- Sliders
+                weaponContainer:AddLabel({ Name = "Settings" })
+                WeaponModSliders[weaponName].RapidFireSpeed = weaponContainer:AddSlider({
+                    Name = "Fire Rate Multiplier",
+                    Min = 1,
+                    Max = 5,
+                    Default = 2,
+                    Rounding = 0.1
+                })
+                
+                WeaponModSliders[weaponName].SpreadReduction = weaponContainer:AddSlider({
+                    Name = "Spread Reduction",
+                    Min = 0,
+                    Max = 1,
+                    Default = 1,
+                    Rounding = 0.05
+                })
+                
+                weaponContainer:AddSeparator()
+                
+                -- Apply button for this weapon
+                weaponContainer:AddButton({
+                    Name = "Apply Mods",
+                    Callback = function()
+                        print("\n🔧 APPLYING MODS TO " .. weaponName .. "\n")
+                        
+                        -- Find the weapon
+                        local tool = nil
+                        
+                        -- Check backpack first
+                        local backpack = LocalPlayer:FindFirstChild("Backpack")
+                        if backpack then
+                            tool = backpack:FindFirstChild(weaponName)
+                        end
+                        
+                        -- Check character
+                        if not tool and LocalPlayer.Character then
+                            tool = LocalPlayer.Character:FindFirstChild(weaponName)
+                        end
+                        
+                        if tool then
+                            ApplyGunModsNowPerWeapon(tool, weaponName)
+                            print("✓ Mods applied!")
+                        else
+                            print("✗ Could not find weapon: " .. weaponName)
+                        end
+                        
+                        print("")
+                    end
+                })
+            end)
+        end
+        
+        print(" Gun Mods Tab refreshed!")
+    end)
+end
+
+-- Add a refresh button at the top
+local ControlContainer = GunModsTab:AddContainer({ Name = "Controls", Side = "Left", AutoSize = true })
+ControlContainer:AddLabel({ Name = "Weapon Management" })
+ControlContainer:AddButton({
+    Name = "Refresh Weapons List",
+    Callback = function()
+        RefreshGunModsTab()
+    end
+})
+ControlContainer:AddButton({
+    Name = "Debug Info",
+    Callback = function()
+        print("\n" .. string.rep("=", 50))
+        print("=== COMPREHENSIVE DEBUG INFO ===")
+        print(string.rep("=", 50))
+        
+        -- Check current tool
+        local tool = nil
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        if backpack then
+            tool = backpack:FindFirstChildOfClass("Tool")
+        end
+        if not tool and LocalPlayer.Character then
+            tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+        end
+        
+        if tool then
+            print("\n🔫 Current tool: " .. tool.Name)
+            print("Tool ClassName: " .. tool.ClassName)
+            
+            -- Tool Attributes
+            print("\n📊 TOOL ATTRIBUTES (BEFORE):")
+            local attrs = tool:GetAttributes()
+            if attrs and next(attrs) then
+                for key, val in pairs(attrs) do
+                    print("  " .. key .. " = " .. tostring(val) .. " (" .. type(val) .. ")")
+                end
+            else
+                print("  (no attributes)")
+            end
+            
+            -- TEST: Try to modify an attribute
+            print("\n🧪 TESTING ATTRIBUTE MODIFICATION:")
+            local originalFireRate = tonumber(tool:GetAttribute("FireRate")) or 0
+            print("  Original FireRate: " .. tostring(originalFireRate))
+            print("  Attempting to set FireRate to 0.05...")
+            
+            tool:SetAttribute("FireRate", 0.05)
+            task.spawn(function()
+                task.wait(0.1)
+            
+            local newFireRate = tonumber(tool:GetAttribute("FireRate")) or 0
+            print("  FireRate after modification: " .. tostring(newFireRate))
+            
+            if math.abs(newFireRate - 0.05) < 0.001 then
+                print("  ✓ SUCCESS! Attributes CAN be modified")
+            else
+                print("  ✗ FAILED! Attributes NOT modifiable (server-protected)")
+                print("  This means the game server is overriding client-side changes")
+            end
+            
+            -- Restore
+            tool:SetAttribute("FireRate", originalFireRate)
+            print("  Restored FireRate to: " .. tostring(originalFireRate))
+            end)
+            
+            print("\n" .. string.rep("=", 50))
+        else
+            print("✗ No tool equipped!")
+            print("Try equipping a weapon like M9 or Taser")
+            print(string.rep("=", 50))
+        end
+    end
+})
+ControlContainer:AddSeparator()
+ControlContainer:AddLabel({ Name = "configure it then click apply" })
+
+
+-- Initial refresh - wrapped in pcall to prevent crashes
+pcall(function()
+    RefreshGunModsTab()
+end)
+
+-- AUTO-APPLY MODS WHEN WEAPON EQUIPPED (if enabled in settings)
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        
+        if AutoApplyMods and LocalPlayer.Character then
+            pcall(function()
+                local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+                if tool then
+                    local weaponName = tool.Name
+                    
+                    -- Only auto-apply if we have settings for this weapon
+                    if WeaponModToggles[weaponName] then
+                        local hasActiveMods = 
+                            WeaponModToggles[weaponName].NoRecoil.Value or
+                            WeaponModToggles[weaponName].NoSpread.Value or
+                            WeaponModToggles[weaponName].RapidFire.Value or
+                            WeaponModToggles[weaponName].InfiniteAmmo.Value
+                        
+                        if hasActiveMods then
+                            ApplyGunModsNowPerWeapon(tool, weaponName)
+                            SendNotification("Auto-Apply", "Mods applied to " .. weaponName)
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
+
+---------------------------------------------------------------------
+-- SETTINGS TAB
+---------------------------------------------------------------------
+print("🔧 Creating Settings Tab...")
+
+local SettingsTab
+local success, err = pcall(function()
+    SettingsTab = Window:AddTab({ Name = "Settings" })
+    print("✓ Settings Tab created successfully")
+end)
+
+if not success then
+    print("✗ Error creating Settings Tab:")
+    print("  " .. tostring(err))
+end
+
+if not SettingsTab then
+    print("✗ Settings Tab is nil!")
+else
+    local SettingsContainer = SettingsTab:AddContainer({ Name = "Menu", Side = "Left", AutoSize = true })
+
+SettingsContainer:AddMenuBind({})
+SettingsContainer:AddSeparator()
+
+SettingsContainer:AddWatermark({
+    Watermark = "PrisonLife | " .. LocalPlayer.Name,
+    ShowFPS = true
+})
+
+SettingsContainer:AddKeybindList({})
+
+SettingsContainer:AddButton({
+    Name = "Reset Position",
+    Callback = function()
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(TeleportLocations["Cafeteria"])
+            SendNotification("Reset", "Position reset to Cafeteria")
+        end
+    end
+})
+
+SettingsContainer:AddButton({
+    Name = "Unload Script",
+    Unsafe = true,
+    Callback = function()
+        Library:Unload()
+        print("Script unloaded!")
+    end
+})
+
+SettingsContainer:AddSeparator()
+
+-- UI & DISPLAY SETTINGS
+local UIDisplayContainer = SettingsTab:AddContainer({ Name = "UI & Display", Side = "Right", AutoSize = true })
+
+UIDisplayContainer:AddLabel({ Name = "Display Options" })
+
+local WatermarkEnabled = true
+UIDisplayContainer:AddToggle({
+    Name = "Show Watermark",
+    Value = true,
+    Callback = function(Value)
+        WatermarkEnabled = Value
+        print(Value and "✓ Watermark enabled" or "✗ Watermark disabled")
+    end
+})
+
+local FPSEnabled = true
+UIDisplayContainer:AddToggle({
+    Name = "Show FPS Counter",
+    Value = true,
+    Callback = function(Value)
+        FPSEnabled = Value
+        print(Value and "✓ FPS counter enabled" or "✗ FPS counter disabled")
+    end
+})
+
+UIDisplayContainer:AddSeparator()
+UIDisplayContainer:AddLabel({ Name = "Menu Settings" })
+
+local MenuScale = 1
+UIDisplayContainer:AddSlider({
+    Name = "Menu Scale",
+    Min = 0.5,
+    Max = 2,
+    Default = 1,
+    Rounding = 0.1,
+    Callback = function(Value)
+        MenuScale = Value
+        print("✓ Menu scale set to " .. tostring(Value))
+    end
+})
+
+UIDisplayContainer:AddSeparator()
+
+-- SCRIPT BEHAVIOR SETTINGS
+local BehaviorContainer = SettingsTab:AddContainer({ Name = "Script Behavior", Side = "Left", AutoSize = true })
+
+BehaviorContainer:AddLabel({ Name = "Logging & Behavior" })
+
+BehaviorContainer:AddToggle({
+    Name = "Verbose Logging",
+    Value = true,
+    Callback = function(Value)
+        VerboseLogging = Value
+        local msg = Value and "✓ Verbose logging enabled" or "✗ Verbose logging disabled"
+        print(msg)
+        SendNotification("Logging", msg)
+    end
+})
+
+BehaviorContainer:AddToggle({
+    Name = "Auto-Apply Mods on Equip",
+    Value = false,
+    Callback = function(Value)
+        AutoApplyMods = Value
+        local msg = Value and "✓ Auto-apply ENABLED (will apply mods to equipped weapons)" or "✗ Auto-apply disabled"
+        print(msg)
+        SendNotification("Auto-Apply", msg)
+    end
+})
+
+BehaviorContainer:AddSeparator()
+BehaviorContainer:AddLabel({ Name = "Data Management" })
+
+BehaviorContainer:AddButton({
+    Name = "Reset All Weapon Stats",
+    Callback = function()
+        OriginalWeaponStats = {}
+        WeaponModToggles = {}
+        WeaponModSliders = {}
+        WeaponContainersCreated = {}
+        print("✓ All weapon stats reset!")
+        print("ℹ️  Refresh weapons list to reload")
+        SendNotification("Reset", "All weapon stats cleared!")
+    end
+})
+
+BehaviorContainer:AddButton({
+    Name = "Clear Teleport History",
+    Callback = function()
+        print("✓ Teleport history cleared")
+        SendNotification("Clear", "Teleport history cleared")
+    end
+})
+
+BehaviorContainer:AddSeparator()
+
+-- PERFORMANCE SETTINGS
+local PerformanceContainer = SettingsTab:AddContainer({ Name = "Performance", Side = "Right", AutoSize = true })
+
+PerformanceContainer:AddLabel({ Name = "Optimization" })
+
+PerformanceContainer:AddToggle({
+    Name = "Gun Mods Patching Loop",
+    Value = true,
+    Callback = function(Value)
+        GunModsLoopEnabled = Value
+        local msg = Value and "✓ Gun Mods loop enabled" or "⚠️  Gun Mods loop disabled (mods won't persist)"
+        print(msg)
+        SendNotification("Performance", msg)
+    end
+})
+
+PerformanceContainer:AddLabel({ Name = "Note: Disabling patching loop saves" })
+PerformanceContainer:AddLabel({ Name = "CPU but mods may not stay active." })
+
+PerformanceContainer:AddSeparator()
+
+-- NOTIFICATIONS SETTINGS
+local NotificationsContainer = SettingsTab:AddContainer({ Name = "Notifications", Side = "Left", AutoSize = true })
+
+NotificationsContainer:AddLabel({ Name = "Notification Options" })
+
+NotificationsContainer:AddToggle({
+    Name = "Enable Notifications",
+    Value = true,
+    Callback = function(Value)
+        NotificationsEnabled = Value
+        print(Value and "✓ Notifications enabled" or "✗ Notifications disabled")
+    end
+})
+
+NotificationsContainer:AddSlider({
+    Name = "Notification Duration (sec)",
+    Min = 1,
+    Max = 10,
+    Default = 3,
+    Rounding = 1,
+    Callback = function(Value)
+        NotificationDuration = Value
+        print("✓ Notification duration: " .. tostring(Value) .. "s")
+    end
+})
+
+NotificationsContainer:AddSeparator()
+
+-- KEYBINDS SETTINGS
+local KeybindsContainer = SettingsTab:AddContainer({ Name = "Keybinds", Side = "Right", AutoSize = true })
+
+KeybindsContainer:AddLabel({ Name = "Quick Actions" })
+
+KeybindsContainer:AddLabel({ Name = "Menu: RightShift" })
+KeybindsContainer:AddLabel({ Name = "(Use MenuBind in Settings)" })
+
+KeybindsContainer:AddSeparator()
+
+local TeleportKey = "T"
+KeybindsContainer:AddLabel({ Name = "Quick TP Key: " .. TeleportKey })
+
+KeybindsContainer:AddSeparator()
+KeybindsContainer:AddLabel({ Name = "Hotkey Info:" })
+KeybindsContainer:AddLabel({ Name = "Press T to TP to last" })
+KeybindsContainer:AddLabel({ Name = "location (coming soon)" })
+
+    print("✓ Settings Tab fully initialized!")
+end
+
+print("✓ Prison Life Script loaded successfully!")
+print("✓ Press RightShift to toggle the menu")
