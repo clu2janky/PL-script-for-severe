@@ -1,8 +1,7 @@
-
 local Bytecode, Load, Library
 
 pcall(function()
-    print("Fetching Pseudosynonym library...)")
+    print("Fetching Pseudosynonym library...")
     Bytecode = game:HttpGet("https://raw.githubusercontent.com/DCHARLESAKAMRGREEN/Severe-Luas/main/Libraries/Pseudosynonym.lua")
     local byteLen = string.len(Bytecode)
     print("Library bytecode fetched (" .. tostring(byteLen) .. " bytes)")
@@ -14,11 +13,11 @@ if not Bytecode then
 end
 
 local success, err = pcall(function()
-    print("Loading bytecode with luau.load...)")
+    print("Loading bytecode with luau.load...")
     Load = luau.load(Bytecode)
     print("Bytecode loaded, load function type: " .. type(Load))
     
-    print("Executing library initialization...)")
+    print("Executing library initialization...")
     Library = Load()
     print("Library initialized, type: " .. type(Library))
 end)
@@ -49,10 +48,10 @@ local success, err = pcall(function()
         return
     end
     
-    print("Creating main window...)")
+    print("Creating main window...")
     Window = Library:CreateWindow({
-        Title = "Prison Life @jankyclu",
-        Tag = "v1.0.5",
+        Title = "Prison Life @lurk116",
+        Tag = "v1.0.9",
         Keybind = "Insert"
     })
     print("Window created!")
@@ -79,7 +78,16 @@ print("Window initialized successfully")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
-local LocalPlayer = Players.LocalPlayer
+
+-- Wait for LocalPlayer to be available
+local LocalPlayer
+repeat
+    LocalPlayer = Players.LocalPlayer
+    if not LocalPlayer then
+        task.wait(0.1)
+    end
+until LocalPlayer
+
 local Camera = workspace.CurrentCamera
 
 -- Weapon Configuration Table - DEFINED EARLY FOR USE IN CALLBACKS
@@ -128,7 +136,7 @@ local TeleportLocations = {
     ["Roof"] = Vector3.new(957, 131, 2231),
     ["Police Station"] = Vector3.new(692, 99, 2244),
     ["City/car"] = Vector3.new(-192, 54, 1881),
-    ["Crim Base"] = Vector3.new(-975, 108, 2044),
+    ["Criminal Base"] = Vector3.new(-975, 108, 2044),
     ["Jail Entrance"] = Vector3.new(503, 102, 2246)
 }
 
@@ -140,15 +148,19 @@ local TeleportTab = Window:AddTab({ Name = "Teleport" })
 
 local TeleportContainer = TeleportTab:AddContainer({ Name = "Locations", Side = "Left", AutoSize = true })
 
-TeleportContainer:AddLabel({ Name = "Quick Teleport" })
 TeleportContainer:AddSeparator()
 
 for locationName, locationPos in pairs(TeleportLocations) do
     TeleportContainer:AddButton({
-        Name = "TP to " .. locationName,
+        Name = "> " .. locationName,
         Callback = function()
-            if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-                LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(locationPos)
+            if LocalPlayer and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                -- Ensure locationPos is a Vector3, not a vector type
+                local targetPos = locationPos
+                if typeof(targetPos) == "vector" then
+                    targetPos = Vector3.new(targetPos.x, targetPos.y, targetPos.z)
+                end
+                LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(targetPos)
                 print("Teleported to " .. locationName)
             end
         end
@@ -157,44 +169,69 @@ end
 
 -- Custom Teleport
 local CustomTPContainer = TeleportTab:AddContainer({ Name = "Custom TP", Side = "Right", AutoSize = true })
+local StoredPositions = {}  -- Table to store copied positions
+local PositionNameInput = nil
 
-local XInput = CustomTPContainer:AddInput({ Name = "X", Text = "0" })
-local YInput = CustomTPContainer:AddInput({ Name = "Y", Text = "0" })
-local ZInput = CustomTPContainer:AddInput({ Name = "Z", Text = "0" })
+CustomTPContainer:AddSeparator()
 
-CustomTPContainer:AddButton({
-    Name = "Teleport to Custom Position",
-    Callback = function()
-        local x = tonumber(XInput.Text or "0") or 0
-        local y = tonumber(YInput.Text or "0") or 0
-        local z = tonumber(ZInput.Text or "0") or 0
-        
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
-            LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(x, y, z)
-            print("Teleported to " .. tostring(Vector3.new(x, y, z)))
-        end
-    end
+local SavedPositionsContainer = TeleportTab:AddContainer({ Name = "Saved Positions", Side = "Right", AutoSize = true })
+
+-- Add input field for position name
+PositionNameInput = CustomTPContainer:AddInput({
+    Name = "Position Name",
+    Text = "My Location"
 })
 
 CustomTPContainer:AddButton({
     Name = "Copy Current Position",
     Callback = function()
-        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+        if LocalPlayer and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
             local hrp = LocalPlayer.Character.HumanoidRootPart
-            if hrp and hrp.Position then
+            if hrp then
                 local pos = hrp.Position
-                if typeof(pos) == "Vector3" then
-                    local posStr = tostring(Vector3.new(math.floor(pos.X), math.floor(pos.Y), math.floor(pos.Z)))
-                    print("Position: " .. posStr)
+                
+                -- Handle both Vector3 and vector types
+                if typeof(pos) == "Vector3" or typeof(pos) == "vector" then
+                    local flooredPos
+                    if typeof(pos) == "vector" then
+                        -- Severe's vector type - extract x, y, z
+                        flooredPos = Vector3.new(math.floor(pos.x), math.floor(pos.y), math.floor(pos.z))
+                    else
+                        flooredPos = Vector3.new(math.floor(pos.X), math.floor(pos.Y), math.floor(pos.Z))
+                    end
+                    local posStr = tostring(flooredPos)
+                    
+                    -- Get custom name from input or use default
+                    local customName = PositionNameInput and PositionNameInput.Value or ""
+                    if customName == "" or customName == "My Location" then
+                        customName = "Pos " .. #StoredPositions + 1
+                    end
+                    
+                    table.insert(StoredPositions, {name = customName, pos = flooredPos})
+                    
+                    -- Add a button to the saved positions container to teleport to this position
+                    SavedPositionsContainer:AddButton({
+                        Name = customName .. " [" .. posStr .. "]",
+                        Callback = function()
+                            if LocalPlayer and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then
+                                local targetPos = flooredPos
+                                if typeof(targetPos) == "vector" then
+                                    targetPos = Vector3.new(targetPos.x, targetPos.y, targetPos.z)
+                                end
+                                LocalPlayer.Character.HumanoidRootPart.CFrame = CFrame.new(targetPos)
+                                print("Teleported to " .. customName .. " (" .. posStr .. ")")
+                            end
+                        end
+                    })
+                    
+                    print("Saved position: " .. customName .. " at " .. posStr)
                 else
-                    print("Position is not a Vector3")
+                    print("Position is not a Vector3 or vector - type is: " .. typeof(pos))
                 end
             end
         end
     end
 })
-
-CustomTPContainer:AddLabel({ Name = "Look in console for copied pos" })
 
 -- ═══════════════════════════════════════════════════════════════
 -- SECTION 5: GUN MODS TAB & FUNCTIONS
@@ -712,4 +749,3 @@ end
 
 print("Prison Life Script loaded successfully!")
 print("Press RightShift to toggle the menu")
-
